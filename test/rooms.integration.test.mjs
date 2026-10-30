@@ -137,6 +137,31 @@ test('surprise events and warned obstacle rotations synchronize across two playe
   assert.equal(stateA.obstacle.kind,stateB.obstacle.kind);
 });
 
+test('dash timing is server-authoritative and synchronized to both clients',{timeout:18000},async()=>{
+  const a=await connect(),b=await connect();let stateA,stateB;
+  a.on('state',value=>{stateA=value;});b.on('state',value=>{stateB=value;});
+  const joinedA=once(a,'joined');a.emit('createRoom',{name:'Dash Host'});const room=await joinedA;
+  const joinedB=once(b,'joined');b.emit('joinRoom',{code:room.code,name:'Dash Guest'});await joinedB;
+  a.emit('ready');b.emit('ready');await new Promise(resolve=>setTimeout(resolve,120));a.emit('start');
+  await waitFor(()=>stateA?.phase==='playing'&&stateB?.phase==='playing');
+  const startBefore=stateA.players.find(p=>p.id===a.id).dashStartedAt;
+  a.emit('input',{dx:0,dy:0,dash:true});
+  await waitFor(()=>stateA?.players.find(p=>p.id===a.id)?.dashStartedAt>startBefore);
+  const dashA=stateA.players.find(p=>p.id===a.id),dashB=stateB.players.find(p=>p.id===a.id);
+  assert.deepEqual([dashA.dashStartedAt,dashA.dashEndsAt,dashA.dashCooldownEndsAt],[dashB.dashStartedAt,dashB.dashEndsAt,dashB.dashCooldownEndsAt]);
+  assert.equal(dashA.dashEndsAt-dashA.dashStartedAt,5000);
+  assert.equal(dashA.dashCooldownEndsAt-dashA.dashEndsAt,2000);
+  a.emit('input',{dx:0,dy:0,dash:true});
+  await new Promise(resolve=>setTimeout(resolve,250));
+  assert.equal(stateA.players.find(p=>p.id===a.id).dashStartedAt,dashA.dashStartedAt,'repeat activation must not restart active dash');
+  await new Promise(resolve=>setTimeout(resolve,6900));
+  a.emit('input',{dx:0,dy:0,dash:true});
+  await waitFor(()=>stateA?.players.find(p=>p.id===a.id)?.dashStartedAt>dashA.dashStartedAt,1000);
+  const renewed=stateB.players.find(p=>p.id===a.id);
+  assert.equal(renewed.dashEndsAt-renewed.dashStartedAt,5000);
+  assert.equal(renewed.dashCooldownEndsAt-renewed.dashEndsAt,2000);
+});
+
 test('public rooms enforce their six player capacity',{timeout:15000},async()=>{
   let listing=[];const browser=await connect(value=>{listing=value;});const host=await connect();
   const hostJoined=once(host,'joined');host.emit('createRoom',{name:'Capacity Host',roomName:'Full Circuit',visibility:'public'});const created=await hostJoined;

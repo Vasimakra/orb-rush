@@ -2447,6 +2447,26 @@ button { font-weight: 600; }
 .results-sub, .result-breakdown { font-size: 11px; }
 .podium-slot .podium-name { font-size: 13px; }
 
+.dash-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 100px;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.72);
+  white-space: nowrap;
+}
+.dash-status small { font: 8px var(--mono); letter-spacing: 0.12em; color: var(--text-muted); }
+.dash-status b { font: 10px var(--mono); color: var(--green); }
+.dash-status.active b { color: var(--cyan); text-shadow: 0 0 8px rgba(56, 189, 248, 0.55); }
+.dash-status.cooling b { color: var(--gold); }
+.touch-dash-btn.dashing { box-shadow: 0 0 22px rgba(56, 189, 248, 0.8); }
+.dash-text { min-width: 34px; text-align: center; }
+
 @media (max-width: 600px) {
   .landing-subtext, .profile-subtitle, .rules-subtitle, .lobby-desc,
   .help-step p, .empty-state p, .room-card-meta { font-size: 13px; }

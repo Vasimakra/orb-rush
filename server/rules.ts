@@ -1,5 +1,11 @@
 export const MAX_COINS = 5;
 
+export function determineWinnerIds(players: { id: string; score: number }[]): string[] {
+  if (players.length === 0) return [];
+  const highScore = Math.max(...players.map(player => player.score));
+  return players.filter(player => player.score === highScore).map(player => player.id);
+}
+
 export function collectCoins(carried: number, amount = 1): number {
   const current = Math.max(0, Math.floor(Number(carried) || 0));
   const gained = Math.max(0, Math.floor(Number(amount) || 0));
@@ -16,8 +22,25 @@ export function resolveDashClash(a: ScoreInventory, b: ScoreInventory) {
   };
 }
 
-export function canStartDash(activeTicks: number, cooldownTicks: number): boolean {
-  return activeTicks <= 0 && cooldownTicks <= 0;
+export const DASH_DURATION_MS = 5000;
+export const DASH_COOLDOWN_MS = 2000;
+export const DASH_SPEED_MULTIPLIER = 1.5;
+
+export function canStartDash(now: number, dashEndsAt: number, cooldownEndsAt: number): boolean {
+  return now >= dashEndsAt && now >= cooldownEndsAt;
+}
+
+export function createDashWindow(now: number) {
+  const dashEndsAt = now + DASH_DURATION_MS;
+  return {
+    dashStartedAt: now,
+    dashEndsAt,
+    dashCooldownEndsAt: dashEndsAt + DASH_COOLDOWN_MS,
+  };
+}
+
+export function isDashActive(now: number, dashStartedAt: number, dashEndsAt: number): boolean {
+  return dashStartedAt > 0 && now >= dashStartedAt && now < dashEndsAt;
 }
 
 export function canDashClash(aDashing: boolean, bDashing: boolean, distance: number, lockedUntil: number, now: number): boolean {
@@ -42,9 +65,9 @@ export function obstacleBlocks(kind:string, x:number, y:number, gap:number, next
   return false;
 }
 
-export const BASE_SPEED = 3.52; // ~10% faster than previous 3.2
-export const DASH_SPEED = 7.8;
-export const MAX_SPEED = 9.8;
+export const BASE_SPEED = 4.455;
+export const SPEED_ZONE_MULTIPLIER = 1.40;
+export const MAX_SPEED = 11.5;
 export const SPEED_MULTIPLIER = 1.0;
 export const BOOST_DURATION_MS = 4000;
 export const PLAYER_RADIUS = 15;
@@ -108,14 +131,14 @@ export function computePlayerSpeed(
   hasSpeedBoost: boolean = false,
   speedMultiplier: number = SPEED_MULTIPLIER
 ): number {
-  let speed = (dashing ? DASH_SPEED : BASE_SPEED) * speedMultiplier;
+  let speed = BASE_SPEED * speedMultiplier;
   // Heavy inventory balancing: each carried coin slightly reduces movement speed (-2.5% each, up to -12.5% at 5 coins)
   const carryPenalty = Math.max(0.875, 1 - Math.min(MAX_COINS, Math.max(0, carried)) * 0.025);
   speed *= carryPenalty;
 
-  // Physical Speed Zone: +30% boost for 4.0s
+  // Physical Speed Zone: +40% boost for 4.0s
   if (hasSpeedBoost) {
-    speed *= 1.30;
+    speed *= SPEED_ZONE_MULTIPLIER;
   }
 
   // Speed surge provides approximately 20% extra speed
@@ -125,6 +148,12 @@ export function computePlayerSpeed(
 
   if (inHazard) {
     speed *= 0.42;
+  }
+
+  // Dash multiplies the player's already modified speed, including carries,
+  // speed zones, Speed Surge, and hazards.
+  if (dashing) {
+    speed *= DASH_SPEED_MULTIPLIER;
   }
 
   // Clamp to maximum speed to avoid uncontrolled stacking

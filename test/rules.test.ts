@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canDashClash, canStartDash, collectCoins, computePlayerSpeed, deliveryBonus, isInSpeedZone, MAX_COINS, MAX_SPEED, obstacleBlocks, pickupAmount, resolveDashClash, resolvePlayerOverlap, PLAYER_COLLISION_DISTANCE } from '../server/rules.ts';
+import { BASE_SPEED, canDashClash, canStartDash, collectCoins, computePlayerSpeed, createDashWindow, DASH_COOLDOWN_MS, DASH_DURATION_MS, DASH_SPEED_MULTIPLIER, deliveryBonus, determineWinnerIds, isDashActive, isInSpeedZone, MAX_COINS, MAX_SPEED, obstacleBlocks, pickupAmount, resolveDashClash, resolvePlayerOverlap, PLAYER_COLLISION_DISTANCE, SPEED_ZONE_MULTIPLIER } from '../server/rules.ts';
+
+test('match winner selection includes every tied top scorer',()=>{
+  assert.deepEqual(determineWinnerIds([{id:'a',score:8},{id:'b',score:8},{id:'c',score:3}]),['a','b']);
+  assert.deepEqual(determineWinnerIds([{id:'a',score:0},{id:'b',score:0}]),['a','b']);
+  assert.deepEqual(determineWinnerIds([]),[]);
+});
 
 test('normal pickups add exactly one carried coin up to the five coin limit',()=>{
   assert.equal(collectCoins(0),1);
@@ -26,9 +32,22 @@ test('empty inventories remain empty after a clash',()=>{
 });
 
 test('dash activation is rejected during the active burst and cooldown',()=>{
-  assert.equal(canStartDash(0,0),true);
-  assert.equal(canStartDash(2,0),false);
-  assert.equal(canStartDash(0,1),false);
+  const window=createDashWindow(1000);
+  assert.equal(canStartDash(1000,0,0),true);
+  assert.equal(canStartDash(window.dashEndsAt-1,window.dashEndsAt,window.dashCooldownEndsAt),false);
+  assert.equal(canStartDash(window.dashEndsAt,window.dashEndsAt,window.dashCooldownEndsAt),false);
+  assert.equal(canStartDash(window.dashCooldownEndsAt,window.dashEndsAt,window.dashCooldownEndsAt),true);
+});
+
+test('dash timing is exactly five active seconds followed by a two second cooldown',()=>{
+  const window=createDashWindow(10_000);
+  assert.equal(DASH_DURATION_MS,5000);
+  assert.equal(DASH_COOLDOWN_MS,2000);
+  assert.equal(window.dashEndsAt-window.dashStartedAt,5000);
+  assert.equal(window.dashCooldownEndsAt-window.dashEndsAt,2000);
+  assert.equal(isDashActive(10_000,window.dashStartedAt,window.dashEndsAt),true);
+  assert.equal(isDashActive(14_999,window.dashStartedAt,window.dashEndsAt),true);
+  assert.equal(isDashActive(15_000,window.dashStartedAt,window.dashEndsAt),false);
 });
 
 test('clashes require two active dashes, close contact, and an expired lockout',()=>{
@@ -54,18 +73,21 @@ test('barriers and gates block their span but leave the marked safe gap',()=>{
   assert.equal(obstacleBlocks('gate',400,300,480,480,300),false);
 });
 
-test('physical speed zone detects entry and provides +30% boost',()=>{
+test('normal movement is 4.455 and physical speed zone provides exactly +40%',()=>{
   assert.equal(isInSpeedZone(150, 75), true, 'west-top speed zone center detected');
   assert.equal(isInSpeedZone(800, 75), true, 'east-top speed zone center detected');
   assert.equal(isInSpeedZone(480, 300), false, 'arena center is not speed zone');
 
   const baseSpeed = computePlayerSpeed(false, 0, null, false, false);
   const boostedSpeed = computePlayerSpeed(false, 0, null, false, true);
+  assert.equal(BASE_SPEED,4.455);
+  assert.equal(baseSpeed,4.455);
+  assert.equal(SPEED_ZONE_MULTIPLIER,1.40);
   const boostRatio = boostedSpeed / baseSpeed;
-  assert.ok(Math.abs(boostRatio - 1.30) < 0.001, `speed zone must award exactly +30% boost, got ratio: ${boostRatio}`);
+  assert.equal(boostRatio,1.40, `speed zone must award exactly +40% boost, got ratio: ${boostRatio}`);
 });
 
-test('actual world-coordinate distance traveled over 10 ticks matches speed ratios',()=>{
+test('actual world-coordinate distance traveled over 10 ticks matches updated speed ratios',()=>{
   // 10 ticks = 1 second at 100ms interval
   const ticks = 10;
   const normalSpeed = computePlayerSpeed(false, 0, null, false, false);
@@ -73,7 +95,8 @@ test('actual world-coordinate distance traveled over 10 ticks matches speed rati
 
   const boostedSpeed = computePlayerSpeed(false, 0, null, false, true);
   const boostedDistance = boostedSpeed * ticks;
-  assert.ok(Math.abs(boostedDistance - normalDistance * 1.3) < 1e-6, `boosted distance should cover ~30% more (expected ${normalDistance * 1.3}, got ${boostedDistance})`);
+  assert.equal(normalSpeed,4.455);
+  assert.ok(Math.abs(boostedDistance - normalDistance * 1.4) < 1e-6, `boosted distance should cover 40% more (expected ${normalDistance * 1.4}, got ${boostedDistance})`);
 
   const heavySpeed = computePlayerSpeed(false, 5, null, false, false);
   const heavyDistance = heavySpeed * ticks;
@@ -85,7 +108,11 @@ test('actual world-coordinate distance traveled over 10 ticks matches speed rati
 
   // Stacking is clamped at MAX_SPEED
   const combinedSpeed = computePlayerSpeed(true, 0, { kind: 'SPEED SURGE', phase: 'active' }, false, true);
-  assert.equal(combinedSpeed, MAX_SPEED, 'combined boosts cannot exceed MAX_SPEED clamp');
+  assert.equal(combinedSpeed,4.455*1.4*1.2*DASH_SPEED_MULTIPLIER,'cap must preserve all requested stacked modifiers');
+  assert.ok(combinedSpeed<MAX_SPEED,'maximum cap must not cancel the requested modifiers');
+  assert.equal(computePlayerSpeed(true,0,null,false,false,2),MAX_SPEED,'configured maximum still clamps extreme base modifiers');
+  assert.equal(computePlayerSpeed(true,5,null,false,true),4.455*0.875*1.4*1.5,'dash applies after carried coin penalty');
+  assert.equal(computePlayerSpeed(true,0,null,true,true),4.455*1.4*0.42*1.5,'hazard and dash modifiers both apply');
 });
 
 test('resolvePlayerOverlap pushes overlapping players apart to avoid ghosting through each other',()=>{

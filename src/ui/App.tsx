@@ -1,14 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 
-type Player = { id: string; name: string; x: number; y: number; score: number; bonus: number; carried: number; ready: boolean; color: string; dash: number; dashCd: number; dx: number; dy: number; boostExpiresAt?: number; clashes?: number; dropped?: number };
+type Player = { id: string; connected: boolean; name: string; x: number; y: number; score: number; bonus: number; carried: number; ready: boolean; color: string; dashStartedAt: number; dashEndsAt: number; dashCooldownEndsAt: number; dx: number; dy: number; boostExpiresAt?: number; clashes?: number; dropped?: number };
 type RoomCard = { id: string; name: string; code: string; hostName: string; players: number; maxPlayers: number; status: string; visibility: string; locked: boolean; joinable: boolean };
 type Fx = { type: string; x: number; y: number; value?: number; bonus?: number; ids?: string[]; lost?: number[]; at: number; id?: string; duration?: number; expiresAt?: number };
-type Game = { id: string; code: string; name: string; isPublic: boolean; locked: boolean; hostId: string; phase: 'lobby' | 'countdown' | 'playing' | 'results'; players: Player[]; orbs: { id: string; x: number; y: number; kind: 'normal' | 'golden' }[]; zone: { x: number; y: number }; time: number; countdown: number; shift: string; shiftLabel: string; shiftEnd: number; laneDir: number; feed: string[]; event: { kind: string; phase: 'warning' | 'active'; startsAt: number; endsAt: number; targetId?: string } | null; obstacle: { kind: string; phase: 'warning' | 'active'; x: number; y: number; gap: number; direction: number; startsAt: number; endsAt: number } | null; width: number; height: number };
+type Game = { serverTime: number; id: string; code: string; name: string; isPublic: boolean; locked: boolean; hostId: string; phase: 'lobby' | 'countdown' | 'playing' | 'results'; players: Player[]; orbs: { id: string; x: number; y: number; kind: 'normal' | 'golden' }[]; zone: { x: number; y: number }; time: number; countdown: number; countdownEndsAt: number; matchStartedAt: number; matchEndsAt: number; matchFinalizedAt: number; winnerIds: string[]; shift: string; shiftLabel: string; shiftEnd: number; laneDir: number; feed: string[]; event: { kind: string; phase: 'warning' | 'active'; startsAt: number; endsAt: number; targetId?: string } | null; obstacle: { kind: string; phase: 'warning' | 'active'; x: number; y: number; gap: number; direction: number; startsAt: number; endsAt: number } | null; width: number; height: number };
 type Particle = { x: number; y: number; vx: number; vy: number; life: number; color: string; r: number; type?: 'spark' | 'coin' | 'ring' };
 
 const SERVER_URL = (import.meta.env.VITE_SERVER_URL as string | undefined) || '';
 const socket: Socket = io(SERVER_URL, { autoConnect: false });
+const DASH_DURATION_MS = 5000;
+const DASH_COOLDOWN_MS = 2000;
+const RESUME_STORAGE_KEY = 'orb-rush-resume';
+type ResumeDetails = { code: string; sessionKey: string };
+function readResumeDetails(): ResumeDetails | null {
+  try { const value = localStorage.getItem(RESUME_STORAGE_KEY); return value ? JSON.parse(value) as ResumeDetails : null; } catch { return null; }
+}
+function clearResumeDetails() { try { localStorage.removeItem(RESUME_STORAGE_KEY); } catch {} }
 
 const PILOT_PROFILES: { [key: string]: { name: string; color: string; earType: 'ears' | 'fins' | 'antenna' | 'dome' | 'horns' | 'crest'; accent: string } } = {
   '#38bdf8': { name: 'Racer', color: '#38bdf8', earType: 'dome', accent: '#ffffff' },
@@ -29,9 +37,9 @@ const SPEED_ZONES = [
 
 export default function App() {
   const [page, setPage] = useState<'home' | 'browser' | 'create' | 'lobby' | 'game' | 'results'>('home');
-  const [name, setName] = useState('Racer');
+  const [name, setName] = useState('');
   const [code, setCode] = useState('');
-  const [roomName, setRoomName] = useState('Neon Circuit');
+  const [roomName, setRoomName] = useState('');
   const [visibility, setVisibility] = useState<'public' | 'private'>('public');
   const [room, setRoom] = useState('');
   const [id, setId] = useState('');
@@ -56,6 +64,7 @@ export default function App() {
   const soundOn = useRef(false);
   const audio = useRef<AudioContext | null>(null);
   const gameRef = useRef<Game | null>(null);
+  const serverClockOffset = useRef(0);
   const fxRef = useRef<Fx | null>(null);
   const particles = useRef<Particle[]>([]);
   const rafRef = useRef<number | undefined>(undefined);
@@ -66,14 +75,15 @@ export default function App() {
 
   useEffect(() => {
     socket.connect();
-    const onConnect = () => { setConnected(true); socket.emit('listRooms'); };
+    const onConnect = () => { setConnected(true); socket.emit('listRooms'); const resume = readResumeDetails(); if (resume) socket.emit('resumeRoom', resume); };
     const onDisconnect = () => setConnected(false);
-    const onJoined = (v: { id: string; code: string }) => { setId(v.id); setRoom(v.code); setNotice(''); setCreating(false); setPage('lobby'); };
-    const onState = (s: Game) => { setGame(s); setRoom(s.code); setRename(s.name); setPage(s.phase === 'lobby' ? 'lobby' : s.phase === 'results' ? 'results' : 'game'); };
+    const onJoined = (v: { id: string; code: string; sessionKey?: string }) => { setId(v.id); setRoom(v.code); if (v.sessionKey) { try { localStorage.setItem(RESUME_STORAGE_KEY, JSON.stringify({ code: v.code, sessionKey: v.sessionKey })); } catch {} } setNotice(''); setCreating(false); setPage('lobby'); };
+    const onState = (s: Game) => { serverClockOffset.current = s.serverTime - Date.now(); setGame(s); setRoom(s.code); setRename(s.name); setPage(s.phase === 'lobby' ? 'lobby' : s.phase === 'results' ? 'results' : 'game'); };
     const onNotice = (s: string) => { setNotice(s); setCreating(false); };
     const onRooms = (s: RoomCard[]) => setRooms(s);
-    const onClosed = (s: string) => { setGame(null); setRoom(''); setNotice(s); setPage('home'); };
-    const onKicked = (s: string) => { setGame(null); setRoom(''); setNotice(s); setPage('home'); };
+    const onClosed = (s: string) => { clearResumeDetails(); setGame(null); setRoom(''); setNotice(s); setPage('home'); };
+    const onKicked = (s: string) => { clearResumeDetails(); setGame(null); setRoom(''); setNotice(s); setPage('home'); };
+    const onResumeFailed = () => { clearResumeDetails(); setGame(null); setRoom(''); setPage('home'); };
     const onFx = (v: Omit<Fx, 'at'>) => {
       const fxData = { ...v, at: Date.now() };
       setFx(fxData);
@@ -115,11 +125,17 @@ export default function App() {
     };
     socket.on('connect', onConnect); socket.on('disconnect', onDisconnect); socket.on('joined', onJoined);
     socket.on('state', onState); socket.on('notice', onNotice); socket.on('rooms:list', onRooms);
-    socket.on('roomClosed', onClosed); socket.on('kicked', onKicked); socket.on('effect', onFx);
+    socket.on('roomClosed', onClosed); socket.on('kicked', onKicked); socket.on('resumeFailed', onResumeFailed); socket.on('effect', onFx);
+    const syncWhenActive = () => { if (document.visibilityState === 'visible' && socket.connected) socket.emit('syncState'); };
+    const reconnectWhenActive = () => { if (!socket.connected) socket.connect(); else socket.emit('syncState'); };
+    document.addEventListener('visibilitychange', syncWhenActive);
+    window.addEventListener('focus', reconnectWhenActive);
     return () => {
       socket.off('connect', onConnect); socket.off('disconnect', onDisconnect); socket.off('joined', onJoined);
       socket.off('state', onState); socket.off('notice', onNotice); socket.off('rooms:list', onRooms);
-      socket.off('roomClosed', onClosed); socket.off('kicked', onKicked); socket.off('effect', onFx);
+      socket.off('roomClosed', onClosed); socket.off('kicked', onKicked); socket.off('resumeFailed', onResumeFailed); socket.off('effect', onFx);
+      document.removeEventListener('visibilitychange', syncWhenActive);
+      window.removeEventListener('focus', reconnectWhenActive);
       socket.disconnect();
     };
   }, []);
@@ -137,7 +153,7 @@ export default function App() {
   };
   const join = () => socket.emit('joinRoom', { code, name });
   const joinPublic = (r: RoomCard) => socket.emit('joinPublicRoom', { id: r.id, name });
-  const leave = () => { socket.emit('leave'); setGame(null); setRoom(''); setPage('home'); };
+  const leave = () => { clearResumeDetails(); socket.emit('leave'); setGame(null); setRoom(''); setPage('home'); };
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -189,10 +205,11 @@ export default function App() {
   const drawMascotRacer = (
     ctx: CanvasRenderingContext2D,
     p: Player,
-    now: number
+    now: number,
+    serverNow: number
   ) => {
     const isMoving = Math.abs(p.dx) > 0.1 || Math.abs(p.dy) > 0.1;
-    const isDashing = p.dash > 0;
+    const isDashing = p.dashStartedAt > 0 && serverNow >= p.dashStartedAt && serverNow < p.dashEndsAt;
     const profile = PILOT_PROFILES[p.color] || { name: p.name, color: p.color, earType: 'dome', accent: '#fff' };
     const hasBoosted = p.boostExpiresAt ? now < p.boostExpiresAt : false;
 
@@ -828,7 +845,7 @@ export default function App() {
 
     // 6. Players
     for (const p of game.players) {
-      drawMascotRacer(ctx, p, now);
+      drawMascotRacer(ctx, p, now, now + serverClockOffset.current);
     }
 
     // 7. Particles
@@ -909,11 +926,26 @@ export default function App() {
   };
 
   const myPlayer = game?.players.find(p => p.id === id);
-  const dashCd = myPlayer?.dashCd || 0;
-  const dashPct = Math.max(0, 100 - dashCd / 40 * 100);
+  const serverNow = Date.now() + serverClockOffset.current;
+  const dashRemainingMs = Math.max(0, (myPlayer?.dashEndsAt || 0) - serverNow);
+  const dashCooldownRemainingMs = Math.max(0, (myPlayer?.dashCooldownEndsAt || 0) - serverNow);
+  const dashActive = dashRemainingMs > 0;
+  const dashCooling = !dashActive && dashCooldownRemainingMs > 0;
+  const dashPct = dashActive
+    ? dashRemainingMs / DASH_DURATION_MS * 100
+    : dashCooling ? (1 - dashCooldownRemainingMs / DASH_COOLDOWN_MS) * 100 : 100;
+  const dashStatus = dashActive
+    ? `ACTIVE ${ (dashRemainingMs / 1000).toFixed(1) }s`
+    : dashCooling ? `COOLDOWN ${ (dashCooldownRemainingMs / 1000).toFixed(1) }s` : 'READY';
+  const dashButtonText = dashActive
+    ? `${(dashRemainingMs / 1000).toFixed(1)}s`
+    : dashCooling ? `${(dashCooldownRemainingMs / 1000).toFixed(1)}s` : 'DASH';
+  const displayedSeconds = game?.phase === 'countdown'
+    ? Math.max(0, Math.ceil((game.countdownEndsAt - serverNow) / 1000))
+    : game?.phase === 'playing' ? Math.max(0, Math.ceil((game.matchEndsAt - serverNow) / 1000)) : game?.time || 0;
   const timeStr = game?.phase === 'countdown'
-    ? String(Math.ceil(game.countdown || 0))
-    : `${String(Math.floor((game?.time || 0) / 60)).padStart(2, '0')}:${String(Math.floor((game?.time || 0) % 60)).padStart(2, '0')}`;
+    ? String(displayedSeconds)
+    : `${String(Math.floor(displayedSeconds / 60)).padStart(2, '0')}:${String(displayedSeconds % 60).padStart(2, '0')}`;
 
   const sortedPlayers = [...(game?.players || [])].sort((a, b) => b.score - a.score);
   const leaderId = sortedPlayers[0]?.id;
@@ -1087,9 +1119,9 @@ export default function App() {
                 <div className="rule-content">
                   <div className="rule-top">
                     <h4>3. USE SPEED ZONES</h4>
-                    <span className="rule-badge badge-speed">+30% SPEED (4s)</span>
+                    <span className="rule-badge badge-speed">+40% SPEED (4s)</span>
                   </div>
-                  <p>Run over blue speed zones to get a temporary 30% speed boost for 4 seconds.</p>
+                  <p>Run over blue speed zones to get a temporary 40% speed boost for 4 seconds.</p>
                 </div>
               </article>
 
@@ -1471,6 +1503,9 @@ export default function App() {
         </div>
 
         <div className="hud-controls-group">
+          <div className={`dash-status ${dashActive ? 'active' : dashCooling ? 'cooling' : ''}`} aria-live="polite">
+            <small>DASH</small><b>{dashStatus}</b>
+          </div>
           <button className="hud-btn-quiet" onClick={toggleSfx}>{muted ? '🔇 SFX' : '🔊 SFX'}</button>
           <button className="hud-btn-quiet" onClick={() => setHelp(true)}>ⓘ</button>
         </div>
@@ -1519,7 +1554,8 @@ export default function App() {
 
             <button
               onPointerDown={e => { e.preventDefault(); dash.current = true; }}
-              className={`touch-dash-btn ${dashCd > 0 ? 'cooling' : ''}`}
+              className={`touch-dash-btn ${dashActive ? 'dashing' : dashCooling ? 'cooling' : ''}`}
+              aria-label={dashActive ? `Dash active, ${dashButtonText} remaining` : dashCooling ? `Dash cooling down, ${dashButtonText} remaining` : 'Dash ready'}
             >
               <svg viewBox="0 0 36 36" className="dash-progress-ring">
                 <path
@@ -1533,7 +1569,7 @@ export default function App() {
                 />
               </svg>
               <span className="dash-icon">⚡</span>
-              <span className="dash-text">DASH</span>
+              <span className="dash-text">{dashButtonText}</span>
             </button>
           </div>
         </div>
@@ -1549,17 +1585,19 @@ export default function App() {
 // ════════════════════════════════════════════════════════════════════════════
 function ResultsScreen({ game, id, isHost, leave }: { game: Game; id: string; isHost: boolean; leave: () => void }) {
   const ranked = [...game.players].sort((a, b) => b.score - a.score);
-  const winner = ranked[0];
+  const winnerIds = game.winnerIds?.length ? game.winnerIds : ranked.length ? ranked.filter(p => p.score === ranked[0].score).map(p => p.id) : [];
+  const winners = ranked.filter(p => winnerIds.includes(p.id));
   const ready = game.players.find(p => p.id === id)?.ready;
 
   const copyCode = (c: string) => {
     void navigator.clipboard?.writeText(c);
   };
 
+  const rankFor = (player: Player) => ranked.filter(other => other.score > player.score).length + 1;
   const podiumOrder = [
-    ranked[1] ? { player: ranked[1], place: 'second', rank: 2 } : null,
-    ranked[0] ? { player: ranked[0], place: 'first', rank: 1 } : null,
-    ranked[2] ? { player: ranked[2], place: 'third', rank: 3 } : null,
+    ranked[1] ? { player: ranked[1], place: 'second', rank: rankFor(ranked[1]) } : null,
+    ranked[0] ? { player: ranked[0], place: 'first', rank: rankFor(ranked[0]) } : null,
+    ranked[2] ? { player: ranked[2], place: 'third', rank: rankFor(ranked[2]) } : null,
   ].filter(Boolean) as { player: Player; place: string; rank: number }[];
 
   return (
@@ -1573,7 +1611,7 @@ function ResultsScreen({ game, id, isHost, leave }: { game: Game; id: string; is
       </header>
       <section className="results">
         <div className="eyebrow">FINAL RESULTS • MATCH CONCLUDED</div>
-        <h1>{winner?.name || 'Racer'} <span>takes the crown 👑</span></h1>
+        <h1>{winners.length > 1 ? winners.map(p => p.name).join(' & ') : winners[0]?.name || 'Racer'} <span>{winners.length > 1 ? 'tie for the crown 👑' : 'takes the crown 👑'}</span></h1>
         <div className="results-sub">Match duration: 2:30 • All scores are final and server-verified</div>
 
         {/* Podium visualization */}
@@ -1600,9 +1638,9 @@ function ResultsScreen({ game, id, isHost, leave }: { game: Game; id: string; is
             <span>BREAKDOWN</span>
             <span>TOTAL SCORE</span>
           </div>
-          {ranked.map((p, i) => (
+          {ranked.map(p => (
             <div className={`result-row ${p.id === id ? 'is-self' : ''}`} key={p.id}>
-              <span className="result-rank">#{i + 1}</span>
+              <span className="result-rank">#{rankFor(p)}</span>
               <span className="score-dot" style={{ background: p.color }} />
               <div className="result-player">
                 <b>{p.name}{p.id === id ? ' (you)' : ''}</b>
@@ -1660,7 +1698,7 @@ function Modal({ close }: { close: () => void }) {
         <div className="help-step"><b>01 / COLLECT</b><p>Run over golden energy orbs. Carry up to 5 coins at a time (each coin adds weight).</p></div>
         <div className="help-step"><b>02 / DELIVER</b><p>Deliver coins into the central Crown Reactor to bank your points safely.</p></div>
         <div className="help-step"><b>03 / DASH CLASH</b><p>A head-on dash collision forces both racers to drop all carried coins. Banked points are always safe.</p></div>
-        <div className="help-step"><b>04 / SPEED ZONES</b><p>Step onto the glowing cyan boost pads in the corners for +30% speed for 4 seconds.</p></div>
+        <div className="help-step"><b>04 / SPEED ZONES</b><p>Step onto the glowing cyan boost pads in the corners for +40% speed for 4 seconds.</p></div>
         <div className="help-step"><b>05 / SHIFTS & HAZARDS</b><p>Watch for shifting conveyor lanes, laser gates, and speed surges across the floating platforms.</p></div>
         <div className="help-step"><b>CONTROLS</b><p>WASD / Arrows to move. Space or Shift to dash. Touch controls available on mobile screens.</p></div>
         <button className="primary" onClick={close}>Got it</button>
