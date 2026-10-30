@@ -1,13 +1,14 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Outfit:wght@500;600;700;800;900&display=swap');
-
 /* ── CSS VARIABLES ──────────────────────────────────────────────────────── */
 :root {
-  font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+  --font-heading: 'Space Grotesk', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--font-body);
   color: #f1f5f9;
   background: #080d22;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  font-weight: 600;
+  font-weight: 400;
 
   --pad-desktop: 24px;
   --pad-mobile: 12px;
@@ -31,7 +32,6 @@
   --bg-deep: #0b1028;
   --bg-card: linear-gradient(145deg, rgba(26, 31, 68, 0.92), rgba(15, 18, 48, 0.96));
   --shadow-card: 0 24px 60px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  --mono: 'DM Mono', monospace;
 }
 
 /* Global Box-Sizing & Viewport Containment */
@@ -2402,4 +2402,55 @@ footer {
   .brand { font-size: 15px; }
   .brand-orb { width: 28px; height: 28px; font-size: 12px; }
   .primary, .secondary, .danger { font-size: 13px; padding: 10px 14px; }
+}
+
+/* ── CONSISTENT TYPE SYSTEM ─────────────────────────────────────────────── */
+body, p, li, label, input, textarea, select, .description, .instructions,
+.landing-subtext, .profile-subtitle, .rules-subtitle, .lobby-desc,
+.help-step p, .results-sub, .room-card-desc {
+  font-family: var(--font-body);
+}
+
+h1, h2, h3, h4, h5, h6,
+button,
+[class*="title"] {
+  font-family: var(--font-heading);
+}
+
+h1, h2, h3, h4, h5, h6, [class*="title"] {
+  font-weight: 700;
+}
+
+button { font-weight: 600; }
+
+.eyebrow, .room-code, .code-pill, .code-input, .hud-card-score,
+.hud-timer-capsule, .hud-event-row b, .player small, .player .ready,
+.player .waiting, .hud-bottom-warning, .hud-bottom-hint, .dash-text,
+.results-sub, .podium-crown-badge, .podium-score, .result-board-header,
+.result-rank, .result-breakdown, .result-score, .connection {
+  font-family: var(--mono);
+}
+
+/* Keep compact HUD and lobby labels legible without changing their layout. */
+.landing-subtext, .profile-subtitle, .rules-subtitle, .lobby-desc,
+.help-step p, .empty-state p, .room-card-meta {
+  font-size: clamp(13px, 1vw, 15px);
+}
+.player small { font-size: 10px; }
+.hud-subtitle, .hud-timer-capsule small { font-size: 9px; }
+.hud-events-card { font-size: 10px; }
+.hud-events-header { font-size: 9px; }
+.hud-bottom-hint { font-size: 10px; }
+.dash-text { font-size: 10px; }
+.code-pill.small { font-size: 12px; }
+.code-pill small { font-size: 11px; }
+.results-sub, .result-breakdown { font-size: 11px; }
+.podium-slot .podium-name { font-size: 13px; }
+
+@media (max-width: 600px) {
+  .landing-subtext, .profile-subtitle, .rules-subtitle, .lobby-desc,
+  .help-step p, .empty-state p, .room-card-meta { font-size: 13px; }
+  .rule-card-compact .rule-top h4 { font-size: 12.5px; }
+  .rule-card-compact .rule-badge { font-size: 9.5px; }
+  .rule-card-compact p { font-size: 12px; line-height: 1.4; }
 }
