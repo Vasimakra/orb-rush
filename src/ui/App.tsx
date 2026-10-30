@@ -1200,7 +1200,6 @@ export default function App() {
       {/* Footer */}
       <footer className="landing-footer">
         <div className="footer-title">ORB RUSH — RACE THE SHIFT</div>
-        <div className="footer-sub">Created for Joel Pinto · Multiplayer game challenge</div>
       </footer>
 
       {/* Redesigned Create Room Dialog */}
