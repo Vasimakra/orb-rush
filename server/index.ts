@@ -102,4 +102,4 @@ setInterval(()=>{const now=Date.now();for(const r of rooms.values()){
 
 app.get('/health',(_req,res)=>res.json({ok:true,rooms:rooms.size}));
 const here=path.dirname(fileURLToPath(import.meta.url));const clientDist=path.resolve(here,'../dist');app.use(express.static(clientDist));app.use((req,res,next)=>{if(req.path.startsWith('/socket.io')||req.path==='/health')return next();res.sendFile(path.join(clientDist,'index.html'),err=>{if(err)next();});});
-httpServer.listen(PORT,()=>console.log(`ORB RUSH server listening on ${PORT}`));
+httpServer.listen(PORT,'0.0.0.0',()=>console.log(`ORB RUSH server listening on 0.0.0.0:${PORT}`));

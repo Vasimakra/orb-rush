@@ -2,6 +2,16 @@ node_modules/
 dist/
 dist-server/
 backups/
-.env
+.env*
+!.env.example
 .DS_Store
 *.log
+*.pem
+*.key
+*.p12
+*.pfx
+*.credentials
+*.password
+passwords.*
+secrets/
+.secrets/

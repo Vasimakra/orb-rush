@@ -2,6 +2,6 @@ services:
   - type: web
     name: orb-rush
     runtime: node
-    buildCommand: npm install && npm run build
+    buildCommand: npm ci && npm run build
     startCommand: npm start
     healthCheckPath: /health
